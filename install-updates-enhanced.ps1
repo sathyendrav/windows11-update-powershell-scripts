@@ -119,7 +119,7 @@ if ($config.DependencyInstallation -and $config.DependencyInstallation.EnableDep
         
         # Log details
         foreach ($dep in $dependencyResult.Dependencies) {
-            $statusIcon = if ($dep.Success) { "✓" } else { "✗" }
+            $statusIcon = if ($dep.Success) { "[OK]" } else { "[FAIL]" }
             $message = "$statusIcon $($dep.Dependency): $($dep.Action)"
             
             if ($dep.Success) {

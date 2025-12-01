@@ -92,6 +92,11 @@ See [Configuration](#-configuration) section for details.
 
 Simple, hands-off script that runs Microsoft Store, Winget, and Chocolatey updates in fully automatic, non-interactive mode.
 
+**Parameters:**
+- `-DisableStoreUpdates` - Skip Microsoft Store app updates
+- `-DisableWingetUpdates` - Skip Winget package updates
+- `-DisableChocolateyUpdates` - Skip Chocolatey package updates
+
 ### 🌟 `install-updates-enhanced.ps1` (⭐ Recommended)
 **Enhanced Automated Installer with Advanced Features**
 
@@ -104,10 +109,19 @@ Full-featured update installer with:
 - 🚫 **Package exclusions** support
 - ⏱️ **Quiet hours** and scheduling options
 
+**Parameters:**
+- `-ConfigPath` - Path to configuration file (default: config.json)
+- `-SkipRestorePoint` - Skip creating a system restore point
+- `-GenerateReport` - Generate an HTML report of the update session
+
 ### 🔍 `update-checker1.ps1`
 **Quick Update Scanner**
 
 Basic checker that displays available updates across all three platforms without installing them. Perfect for a quick overview.
+
+**Parameters:**
+- `-ConfigPath` - Path to configuration file (default: config.json)
+- `-NoLog` - Disable logging for this session
 
 ### 📊 `update-checker2.ps1`
 **Advanced Update Reporter**
@@ -118,6 +132,24 @@ Enhanced checker with comprehensive features:
 - 📝 List-only audit mode
 - 📋 Installed software inventory
 - 💻 System information display
+
+**Parameters:**
+- `-AutoUpdate` - Prompt to perform updates automatically
+- `-ListOnly` - Only list updates without offering installation
+- `-ConfigPath` - Path to configuration file (default: config.json)
+- `-NoLog` - Disable logging for this session
+
+### 🔔 `test-notifications.ps1` (New! 🎉)
+**Toast Notification Tester**
+
+Test Windows toast notifications:
+- 🔔 **Test all notification types** (Info, Success, Warning, Error)
+- ⏱️ **Customizable delays** between notifications
+- ⚙️ **Config-based testing** for real-world scenarios
+
+**Parameters:**
+- `-DelaySeconds` - Delay in seconds between notifications (1-60, default: 3)
+- `-SkipConfigTest` - Skip the config-based notification test
 
 ### 🛠️ `UpdateUtilities.psm1`
 **Shared Module Library**
@@ -140,6 +172,14 @@ Powerful rollback tool for undoing updates:
 - 🖥️ **Interactive menu** for easy navigation
 - 🔒 **Safety checks** with confirmation prompts
 
+**Parameters:**
+- `-ListRestorePoints` - List all available system restore points
+- `-RestorePointNumber` - Restore system to specific restore point
+- `-ListHistory` - Show package update history
+- `-RollbackPackage` - Package name to rollback
+- `-Version` - Target version for package rollback
+- `-Source` - Package source: Winget or Chocolatey
+
 ### 📊 `view-history.ps1` (New! 🎉)
 **Update History Viewer**
 
@@ -149,6 +189,14 @@ Analyze update operations from the history database:
 - ❌ **Filter failed operations** for troubleshooting
 - 📄 **Export reports** to HTML or CSV formats
 - 📊 **Summary statistics** by source and operation type
+
+**Parameters:**
+- `-Days` - Number of days of history to display (default: 30)
+- `-Source` - Filter by package source: Store, Winget, or Chocolatey
+- `-PackageName` - Filter by package name (supports wildcards)
+- `-FailedOnly` - Show only failed operations
+- `-Export` - Export history to HTML or CSV report
+- `-OutputPath` - Path for exported report
 
 ### 📦 `view-cache.ps1` (New! 🎉)
 **Package Cache Viewer**
@@ -160,6 +208,13 @@ Manage and view the differential update cache:
 - 🔄 **Compare versions** with current available packages
 - 🗑️ **Clear cache** to force full update checks
 
+**Parameters:**
+- `-Source` - Filter by package source: Store, Winget, or Chocolatey
+- `-PackageName` - Filter by specific package name
+- `-ShowComparison` - Compare cached versions with current versions
+- `-ClearCache` - Clear the entire cache or specific source
+- `-Statistics` - Show only cache statistics
+
 ### 🎯 `manage-priorities.ps1` (New! 🎉)
 **Package Priority Manager**
 
@@ -170,6 +225,9 @@ Interactive tool for managing update priorities:
 - 📊 **View statistics** and package counts
 - 🧪 **Test ordering** with live previews
 - ⚙️ **Configure strategies** and toggle priority system
+
+**Parameters:**
+- `-ConfigPath` - Path to configuration file (default: config.json)
 
 ---
 
@@ -410,13 +468,30 @@ See **[config-example.json](config-example.json)** for a complete, documented co
 
 ## 📖 Usage
 
-### Option 1: `install-updates.ps1` - Basic (Legacy)
+### Option 1: `install-updates.ps1` - Basic
 
 Simple hands-off automation without advanced features.
 
-**Run it:**
+**Basic usage:**
 ```powershell
 .\install-updates.ps1
+```
+
+**Skip specific update sources:**
+```powershell
+# Skip Microsoft Store updates
+.\install-updates.ps1 -DisableStoreUpdates
+
+# Skip Chocolatey updates
+.\install-updates.ps1 -DisableChocolateyUpdates
+
+# Only run Winget updates
+.\install-updates.ps1 -DisableStoreUpdates -DisableChocolateyUpdates
+```
+
+**Get detailed output:**
+```powershell
+.\install-updates.ps1 -Verbose
 ```
 
 ---
@@ -597,6 +672,65 @@ param(
 - 📝 **Not all packages support version-specific installation**
 - 🔄 **Winget rollback**: Uninstalls current version, then installs target version
 - 🍫 **Chocolatey rollback**: Uses `--allow-downgrade` flag
+
+---
+
+## 📚 Getting Help
+
+All scripts include comprehensive built-in help documentation using PowerShell's standard help system.
+
+### View Full Help
+
+```powershell
+# Get complete help for any script
+Get-Help .\install-updates.ps1 -Full
+Get-Help .\install-updates-enhanced.ps1 -Full
+Get-Help .\update-checker1.ps1 -Full
+```
+
+### View Examples
+
+```powershell
+# See usage examples
+Get-Help .\install-updates.ps1 -Examples
+Get-Help .\rollback-updates.ps1 -Examples
+```
+
+### View Parameter Details
+
+```powershell
+# Get details about a specific parameter
+Get-Help .\install-updates.ps1 -Parameter DisableStoreUpdates
+Get-Help .\view-history.ps1 -Parameter Days
+```
+
+### Quick Syntax Reference
+
+```powershell
+# See parameter syntax without details
+Get-Help .\install-updates-enhanced.ps1 -Syntax
+```
+
+### Help Contents Include:
+
+- ✅ **Synopsis** - Brief description
+- ✅ **Description** - Detailed explanation
+- ✅ **Parameters** - All parameters with descriptions, types, and defaults
+- ✅ **Examples** - Real-world usage examples
+- ✅ **Notes** - Additional information and requirements
+
+### PowerShell Help Tips
+
+```powershell
+# List all available help topics
+Get-Help about_*
+
+# Update PowerShell help (run as Administrator)
+Update-Help
+
+# Get help for a cmdlet
+Get-Help Get-Command -Full
+```
 
 ---
 
