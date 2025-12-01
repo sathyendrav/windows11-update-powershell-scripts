@@ -216,6 +216,420 @@ function Test-UpdateSource {
 }
 
 # ============================================================================
+# Update History Database (JSON)
+# ============================================================================
+
+function Initialize-UpdateHistory {
+    <#
+    .SYNOPSIS
+        Initializes the update history database (JSON file).
+    .DESCRIPTION
+        Creates the update history JSON file if it doesn't exist.
+    .PARAMETER HistoryPath
+        Path to the history JSON file.
+    .EXAMPLE
+        Initialize-UpdateHistory -HistoryPath ".\logs\update-history.json"
+    #>
+    param(
+        [string]$HistoryPath = ".\logs\update-history.json"
+    )
+    
+    try {
+        # Ensure directory exists
+        $directory = Split-Path -Parent $HistoryPath
+        if (-not (Test-Path $directory)) {
+            New-Item -Path $directory -ItemType Directory -Force | Out-Null
+        }
+        
+        # Create file if it doesn't exist
+        if (-not (Test-Path $HistoryPath)) {
+            @() | ConvertTo-Json | Set-Content -Path $HistoryPath -Encoding UTF8
+            Write-Verbose "Created new update history database at: $HistoryPath"
+        }
+        
+        return $true
+    } catch {
+        Write-Warning "Failed to initialize update history: $_"
+        return $false
+    }
+}
+
+function Add-UpdateHistoryEntry {
+    <#
+    .SYNOPSIS
+        Adds an entry to the update history database.
+    .DESCRIPTION
+        Records package update operations with timestamp, version info, and status.
+    .PARAMETER PackageName
+        Name/ID of the package.
+    .PARAMETER Version
+        Version that was installed/upgraded to.
+    .PARAMETER PreviousVersion
+        Previous version before the update (if available).
+    .PARAMETER Source
+        Package source: Store, Winget, or Chocolatey.
+    .PARAMETER Operation
+        Type of operation: Install, Upgrade, Uninstall, Rollback.
+    .PARAMETER Success
+        Whether the operation succeeded.
+    .PARAMETER ErrorMessage
+        Error message if the operation failed.
+    .PARAMETER HistoryPath
+        Path to the history JSON file.
+    .EXAMPLE
+        Add-UpdateHistoryEntry -PackageName "7zip.7zip" -Version "23.01" -Source "Winget" -Operation "Upgrade" -Success $true
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Version,
+        
+        [string]$PreviousVersion = "Unknown",
+        
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Store", "Winget", "Chocolatey")]
+        [string]$Source,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Install", "Upgrade", "Uninstall", "Rollback", "Scan")]
+        [string]$Operation,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$Success,
+        
+        [string]$ErrorMessage = "",
+        
+        [string]$HistoryPath = ".\logs\update-history.json"
+    )
+    
+    try {
+        # Initialize history file if needed
+        Initialize-UpdateHistory -HistoryPath $HistoryPath | Out-Null
+        
+        # Create new entry
+        $entry = [PSCustomObject]@{
+            Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+            PackageName = $PackageName
+            Version = $Version
+            PreviousVersion = $PreviousVersion
+            Source = $Source
+            Operation = $Operation
+            Success = $Success
+            ErrorMessage = $ErrorMessage
+            ComputerName = $env:COMPUTERNAME
+            UserName = $env:USERNAME
+        }
+        
+        # Load existing history
+        $history = @()
+        if (Test-Path $HistoryPath) {
+            $content = Get-Content -Path $HistoryPath -Raw -ErrorAction SilentlyContinue
+            if ($content) {
+                $history = $content | ConvertFrom-Json
+                if ($history -isnot [array]) {
+                    $history = @($history)
+                }
+            }
+        }
+        
+        # Add new entry
+        $history += $entry
+        
+        # Save back to file
+        $history | ConvertTo-Json -Depth 10 | Set-Content -Path $HistoryPath -Encoding UTF8
+        
+        Write-Verbose "Added update history entry for $PackageName"
+        return $true
+    } catch {
+        Write-Warning "Failed to add update history entry: $_"
+        return $false
+    }
+}
+
+function Get-UpdateHistory {
+    <#
+    .SYNOPSIS
+        Retrieves update history from the database.
+    .DESCRIPTION
+        Queries the update history JSON file with optional filters.
+    .PARAMETER PackageName
+        Filter by package name (supports wildcards).
+    .PARAMETER Source
+        Filter by source: Store, Winget, or Chocolatey.
+    .PARAMETER Operation
+        Filter by operation type.
+    .PARAMETER Days
+        Number of days of history to retrieve (default: all).
+    .PARAMETER Success
+        Filter by success status (true/false).
+    .PARAMETER HistoryPath
+        Path to the history JSON file.
+    .EXAMPLE
+        Get-UpdateHistory -Days 7
+    .EXAMPLE
+        Get-UpdateHistory -PackageName "*chrome*" -Source Winget
+    .EXAMPLE
+        Get-UpdateHistory -Success $false
+    #>
+    param(
+        [string]$PackageName,
+        
+        [ValidateSet("Store", "Winget", "Chocolatey")]
+        [string]$Source,
+        
+        [ValidateSet("Install", "Upgrade", "Uninstall", "Rollback", "Scan")]
+        [string]$Operation,
+        
+        [int]$Days,
+        
+        [bool]$Success,
+        
+        [string]$HistoryPath = ".\logs\update-history.json"
+    )
+    
+    try {
+        # Check if history file exists
+        if (-not (Test-Path $HistoryPath)) {
+            Write-Verbose "No update history found at: $HistoryPath"
+            return @()
+        }
+        
+        # Load history
+        $content = Get-Content -Path $HistoryPath -Raw
+        if (-not $content) {
+            return @()
+        }
+        
+        $history = $content | ConvertFrom-Json
+        if ($history -isnot [array]) {
+            $history = @($history)
+        }
+        
+        # Apply filters
+        if ($PackageName) {
+            $history = $history | Where-Object { $_.PackageName -like $PackageName }
+        }
+        
+        if ($Source) {
+            $history = $history | Where-Object { $_.Source -eq $Source }
+        }
+        
+        if ($Operation) {
+            $history = $history | Where-Object { $_.Operation -eq $Operation }
+        }
+        
+        if ($PSBoundParameters.ContainsKey('Success')) {
+            $history = $history | Where-Object { $_.Success -eq $Success }
+        }
+        
+        if ($Days) {
+            $cutoffDate = (Get-Date).AddDays(-$Days)
+            $history = $history | Where-Object { 
+                [DateTime]::Parse($_.Timestamp) -gt $cutoffDate 
+            }
+        }
+        
+        return $history
+    } catch {
+        Write-Warning "Failed to retrieve update history: $_"
+        return @()
+    }
+}
+
+function Clear-UpdateHistory {
+    <#
+    .SYNOPSIS
+        Clears old entries from the update history database.
+    .DESCRIPTION
+        Removes entries older than specified days to keep database manageable.
+    .PARAMETER Days
+        Keep entries from the last N days (default: 90).
+    .PARAMETER HistoryPath
+        Path to the history JSON file.
+    .EXAMPLE
+        Clear-UpdateHistory -Days 30
+    #>
+    param(
+        [int]$Days = 90,
+        [string]$HistoryPath = ".\logs\update-history.json"
+    )
+    
+    try {
+        if (-not (Test-Path $HistoryPath)) {
+            Write-Verbose "No history file to clear"
+            return $true
+        }
+        
+        # Load history
+        $content = Get-Content -Path $HistoryPath -Raw
+        if (-not $content) {
+            return $true
+        }
+        
+        $history = $content | ConvertFrom-Json
+        if ($history -isnot [array]) {
+            $history = @($history)
+        }
+        
+        $originalCount = $history.Count
+        $cutoffDate = (Get-Date).AddDays(-$Days)
+        
+        # Keep only recent entries
+        $history = $history | Where-Object { 
+            [DateTime]::Parse($_.Timestamp) -gt $cutoffDate 
+        }
+        
+        # Save filtered history
+        $history | ConvertTo-Json -Depth 10 | Set-Content -Path $HistoryPath -Encoding UTF8
+        
+        $removed = $originalCount - $history.Count
+        Write-Verbose "Cleared $removed old entries from update history"
+        return $true
+    } catch {
+        Write-Warning "Failed to clear update history: $_"
+        return $false
+    }
+}
+
+function Export-UpdateHistoryReport {
+    <#
+    .SYNOPSIS
+        Exports update history to a formatted report.
+    .DESCRIPTION
+        Generates HTML or CSV report from update history database.
+    .PARAMETER Format
+        Report format: HTML or CSV.
+    .PARAMETER OutputPath
+        Path to save the report.
+    .PARAMETER Days
+        Number of days of history to include.
+    .PARAMETER HistoryPath
+        Path to the history JSON file.
+    .EXAMPLE
+        Export-UpdateHistoryReport -Format HTML -OutputPath ".\reports\history.html" -Days 30
+    #>
+    param(
+        [ValidateSet("HTML", "CSV")]
+        [string]$Format = "HTML",
+        
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath,
+        
+        [int]$Days = 30,
+        
+        [string]$HistoryPath = ".\logs\update-history.json"
+    )
+    
+    try {
+        # Get history
+        $history = Get-UpdateHistory -Days $Days -HistoryPath $HistoryPath
+        
+        if ($history.Count -eq 0) {
+            Write-Warning "No history entries found for the specified period"
+            return $false
+        }
+        
+        # Ensure output directory exists
+        $outputDir = Split-Path -Parent $OutputPath
+        if (-not (Test-Path $outputDir)) {
+            New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
+        }
+        
+        switch ($Format) {
+            "CSV" {
+                $history | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
+            }
+            "HTML" {
+                $html = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Update History Report</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #0078d4; border-bottom: 3px solid #0078d4; padding-bottom: 10px; }
+        .summary { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th { background: #0078d4; color: white; padding: 12px; text-align: left; font-weight: 600; }
+        td { padding: 10px; border-bottom: 1px solid #ddd; }
+        tr:hover { background: #f9f9f9; }
+        .success { color: #107c10; font-weight: bold; }
+        .failure { color: #d13438; font-weight: bold; }
+        .source-store { background: #0078d4; color: white; padding: 3px 8px; border-radius: 3px; font-size: 0.85em; }
+        .source-winget { background: #f7630c; color: white; padding: 3px 8px; border-radius: 3px; font-size: 0.85em; }
+        .source-chocolatey { background: #80b5e3; color: white; padding: 3px 8px; border-radius: 3px; font-size: 0.85em; }
+        .footer { margin-top: 30px; text-align: center; color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Update History Report</h1>
+        <div class="summary">
+            <strong>Period:</strong> Last $Days days<br>
+            <strong>Total Entries:</strong> $($history.Count)<br>
+            <strong>Successful:</strong> $($history | Where-Object { $_.Success } | Measure-Object | Select-Object -ExpandProperty Count)<br>
+            <strong>Failed:</strong> $($history | Where-Object { -not $_.Success } | Measure-Object | Select-Object -ExpandProperty Count)<br>
+            <strong>Generated:</strong> $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+        </div>
+        
+        <table>
+            <tr>
+                <th>Timestamp</th>
+                <th>Package</th>
+                <th>Version</th>
+                <th>Previous</th>
+                <th>Source</th>
+                <th>Operation</th>
+                <th>Status</th>
+            </tr>
+"@
+                foreach ($entry in ($history | Sort-Object Timestamp -Descending)) {
+                    $statusClass = if ($entry.Success) { "success" } else { "failure" }
+                    $statusText = if ($entry.Success) { "Success" } else { "Failed" }
+                    $sourceClass = "source-$($entry.Source.ToLower())"
+                    
+                    $html += @"
+            <tr>
+                <td>$($entry.Timestamp)</td>
+                <td>$($entry.PackageName)</td>
+                <td>$($entry.Version)</td>
+                <td>$($entry.PreviousVersion)</td>
+                <td><span class="$sourceClass">$($entry.Source)</span></td>
+                <td>$($entry.Operation)</td>
+                <td class="$statusClass">$statusText</td>
+            </tr>
+"@
+                }
+                
+                $html += @"
+        </table>
+        
+        <div class="footer">
+            <p>Generated by Windows Update Helper Scripts</p>
+        </div>
+    </div>
+</body>
+</html>
+"@
+                
+                $html | Set-Content -Path $OutputPath -Encoding UTF8
+            }
+        }
+        
+        Write-Verbose "Exported update history report to: $OutputPath"
+        return $true
+    } catch {
+        Write-Warning "Failed to export update history report: $_"
+        return $false
+    }
+}
+
+# ============================================================================
 # System Restore Point
 # ============================================================================
 
