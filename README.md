@@ -191,7 +191,7 @@ These scripts are provided "AS IS" without warranty of any kind, express or impl
 
 ### ⚖️ Legal Notice
 
-- This software is licensed under the MIT License (see [LICENSE](LICENSE))
+- This software is licensed under the Apache License 2.0 (see [LICENSE](LICENSE))
 - Microsoft, Windows, PowerShell, Microsoft Store, and Winget are trademarks of Microsoft Corporation
 - Chocolatey is a trademark of Chocolatey Software, Inc.
 - No affiliation with or endorsement by Microsoft or Chocolatey is implied
