@@ -435,7 +435,7 @@ notepad config.json
   "ReportSettings": {
     "GenerateReport": true,
     "ReportFormat": "CSV",
-    "ReportDirectory": "C:\\Reports\\Updates"
+    "ReportDirectory": ".\\reports"
   }
 }
 ```
@@ -517,7 +517,7 @@ Full-featured installer with logging, reporting, and safety features.
 
 **With custom configuration:**
 ```powershell
-.\install-updates-enhanced.ps1 -ConfigPath "C:\MyConfig\config.json"
+.\install-updates-enhanced.ps1 -ConfigPath ".\my-config.json"
 ```
 
 **Skip restore point:**
@@ -883,7 +883,7 @@ Configure which packages update first with an interactive menu system.
 
 3. **Navigate to the script directory**
    ```powershell
-   cd "d:\MySoftProjects\PowerShell\UpdateApps\windows11updatpowershellscripts"
+   cd "path\to\windows11-update-powershell-scripts"
    ```
 
 4. **Run your desired script**
@@ -922,7 +922,7 @@ Automate updates with Windows Task Scheduler for hands-free maintenance.
    - Program/script: `powershell.exe`
    - Add arguments:
      ```
-     -ExecutionPolicy Bypass -File "d:\MySoftProjects\PowerShell\UpdateApps\windows11updatpowershellscripts\update-checker2.ps1" -AutoUpdate
+     -ExecutionPolicy Bypass -File "C:\Path\To\Scripts\update-checker2.ps1" -AutoUpdate
      ```
 
 6. **Save** the task
@@ -932,7 +932,7 @@ Automate updates with Windows Task Scheduler for hands-free maintenance.
 ## 📁 Project Structure
 
 ```
-windows11updatpowershellscripts/
+windows11-update-powershell-scripts/
 ├── config.json                      # Configuration file (create from example)
 ├── config-example.json              # Complete configuration example with docs
 ├── install-updates.ps1              # Basic update installer
@@ -943,6 +943,7 @@ windows11updatpowershellscripts/
 ├── view-history.ps1                 # Update history viewer
 ├── view-cache.ps1                   # Package cache viewer
 ├── manage-priorities.ps1            # Package priority manager
+├── test-notifications.ps1           # Toast notification tester
 ├── UpdateUtilities.psm1             # Shared module library
 ├── logs/                            # Execution logs (auto-created)
 │   └── update-history.json          # Update history database
@@ -1321,7 +1322,7 @@ The hash database (`package-hashes.json`) stores cryptographic hashes for all va
         "Version": "2.44.0",
         "Hash": "a3f5c...",
         "Algorithm": "SHA256",
-        "FilePath": "C:\\Program Files\\Git\\bin\\git.exe",
+        "FilePath": "C:\\Program Files\\Package\\app.exe",
         "Timestamp": "2025-01-19T15:45:00"
       }
     ]
@@ -1356,7 +1357,7 @@ Packages signed by these publishers will pass signature validation. Set `BlockUn
 
 ```powershell
 # Calculate file hash
-$hash = Get-FileHash256 -FilePath "C:\Program Files\Git\bin\git.exe" `
+$hash = Get-FileHash256 -FilePath "C:\Program Files\Package\app.exe" `
   -Algorithm "SHA256"
 
 # Find package executable path
@@ -1393,7 +1394,7 @@ Initialize-HashDatabase -DatabasePath ".\cache\package-hashes.json"
 # Save package hash
 Save-PackageHash -PackageName "Git.Git" -Source "Winget" `
   -Version "2.44.0" -Hash "a3f5c..." -Algorithm "SHA256" `
-  -FilePath "C:\Program Files\Git\bin\git.exe"
+  -FilePath "C:\Program Files\Package\app.exe"
 
 # Retrieve stored hash
 $storedHash = Get-PackageHash -PackageName "Git.Git" -Source "Winget"
