@@ -73,6 +73,45 @@ Enhanced checker with comprehensive features:
 
 > 💡 **Tip:** Run these scripts in an elevated PowerShell session (`Run as Administrator`) to avoid permission issues.
 
+> ⚠️ **IMPORTANT:** Review all scripts before running them. Understand what they do and ensure they meet your security and operational requirements.
+
+---
+
+## ⚠️ Disclaimer
+
+**USE AT YOUR OWN RISK**
+
+These scripts are provided "AS IS" without warranty of any kind, express or implied. The author(s) and contributors:
+
+- ❌ Make **NO WARRANTIES** regarding functionality, reliability, or suitability
+- ❌ Accept **NO LIABILITY** for any damages, data loss, system issues, or other problems
+- ❌ Are **NOT RESPONSIBLE** for misuse, misconfiguration, or unintended consequences
+- ❌ Provide **NO SUPPORT GUARANTEES** or service level agreements
+
+### 🛡️ Security & Safety
+
+- **Test First:** Always test scripts in a non-production environment before deploying
+- **Backup Data:** Create system backups before running automated updates
+- **Review Code:** Inspect the script contents to ensure they align with your security policies
+- **User Responsibility:** You are solely responsible for any consequences of running these scripts
+- **System Changes:** These scripts modify your system by installing/updating software
+
+### 📋 Recommended Practices
+
+1. **Read the scripts** - Understand what they do before executing
+2. **Test in safe environment** - Use a test machine or virtual machine first
+3. **Create restore points** - Enable System Restore before major updates
+4. **Backup critical data** - Protect important files and configurations
+5. **Monitor execution** - Watch for errors or unexpected behavior
+6. **Keep logs** - Document what was run and when for troubleshooting
+
+### ⚖️ Legal Notice
+
+- This software is licensed under the MIT License (see [LICENSE](LICENSE))
+- Microsoft, Windows, PowerShell, Microsoft Store, and Winget are trademarks of Microsoft Corporation
+- Chocolatey is a trademark of Chocolatey Software, Inc.
+- No affiliation with or endorsement by Microsoft or Chocolatey is implied
+
 ---
 
 ## 🚀 Installation
@@ -83,12 +122,23 @@ Enhanced checker with comprehensive features:
    cd windows11updatpowershellscripts
    ```
 
-2. **Set execution policy** (if needed)
+2. **Review the scripts** (REQUIRED)
+   ```powershell
+   # Read each script to understand what it does
+   Get-Content .\install-updates.ps1
+   Get-Content .\update-checker1.ps1
+   Get-Content .\update-checker2.ps1
+   ```
+
+3. **Set execution policy** (if needed)
    ```powershell
    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
    ```
+   ⚠️ **Security Note:** Only change execution policy if you understand the implications and trust these scripts.
 
-3. **You're ready to go!** 🎉
+4. **You're ready to go!** 🎉
+   
+   ⚠️ **REMINDER:** Test on non-critical systems first!
 
 ---
 
@@ -237,15 +287,36 @@ Automate updates with Windows Task Scheduler for hands-free maintenance.
 
 ## ⚠️ Notes & Limitations
 
+### Known Limitations
+
 - **Microsoft Store updates** via CIM may depend on:
-  - Windows edition
+  - Windows edition (Home, Pro, Enterprise)
   - MDM / Store configuration
+  - Organizational policies
+  - Network connectivity
   
 - **Winget and Chocolatey** updates can sometimes prompt for input or fail due to:
   - Package-specific constraints
   - Network or permission issues
+  - Package repository availability
+  - Dependency conflicts
 
-- **Always test** in `ListOnly` / preview modes (`update-checker1.ps1` or `update-checker2.ps1 -ListOnly`) before enabling automatic updates in production environments.
+### ⚠️ Critical Warnings
+
+- **Production Systems:** Always test in `ListOnly` / preview modes (`update-checker1.ps1` or `update-checker2.ps1 -ListOnly`) before enabling automatic updates in production environments
+- **Data Loss Risk:** Automated updates may cause application downtime or compatibility issues
+- **System Stability:** Some updates may require system restarts or cause temporary instability
+- **Network Usage:** Updates can consume significant bandwidth
+- **No Rollback:** These scripts don't provide automatic rollback functionality
+- **Third-Party Software:** Updates from Winget and Chocolatey are maintained by third parties
+
+### 🔒 Security Considerations
+
+- **Elevated Privileges:** These scripts may require administrator access
+- **Code Execution:** Running scripts with elevated privileges carries security risks
+- **Package Sources:** Verify package sources before installing
+- **Malicious Updates:** No validation is performed on package authenticity by these scripts
+- **Enterprise Environments:** Check with your IT department before using in corporate settings
 
 ---
 
@@ -261,6 +332,25 @@ Contributions are welcome! Feel free to:
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+### MIT License Summary
+
+Permission is granted to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of this software, subject to the following conditions:
+
+✅ **You MAY:**
+- Use these scripts for personal or commercial purposes
+- Modify and distribute modified versions
+- Include in other projects
+
+❌ **You MUST:**
+- Include the original copyright notice and license
+- Accept that the software is provided "AS IS" without warranty
+
+⚠️ **The authors/contributors are NOT LIABLE for:**
+- Any damages or losses resulting from use
+- System failures, data loss, or security breaches
+- Compatibility issues or conflicts
+- Any claims, damages, or other liability
 
 ---
 
