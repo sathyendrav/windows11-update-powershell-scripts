@@ -13,6 +13,7 @@ Common issues and solutions for Windows Update Helper Scripts.
 - [Permission Problems](#permission-problems)
 - [Configuration Issues](#configuration-issues)
 - [Logging Issues](#logging-issues)
+- [Update Validation Issues](#update-validation-issues)
 - [Notification Issues](#notification-issues)
 - [Rollback Issues](#rollback-issues)
 
@@ -378,6 +379,145 @@ try {
      "MaxLogFiles": 5,
      "MaxLogFileSizeKB": 2048
    }
+   ```
+
+---
+
+## Update Validation Issues
+
+### ❌ Validation reports package failed but update succeeded
+
+**Problem:** Validation incorrectly reports failures for successful updates.
+
+**Causes:**
+- Version detection parsing issues
+- Health check commands timing out
+- Package doesn't change version number
+
+**Solutions:**
+
+1. **Check validation timeout:**
+   ```json
+   "UpdateValidation": {
+     "ValidationTimeout": 60
+   }
+   ```
+
+2. **Disable version verification if problematic:**
+   ```json
+   "UpdateValidation": {
+     "VerifyVersionChange": false
+   }
+   ```
+
+3. **Adjust health check command:**
+   ```json
+   "HealthCheckCommands": {
+     "MyApp": "myapp --version 2>&1"
+   }
+   ```
+
+4. **Check validation report for details:**
+   ```powershell
+   Get-Content ".\reports\validation-report-*.html"
+   ```
+
+### ❌ Health checks fail for working packages
+
+**Problem:** Health check validation fails even though package works.
+
+**Solutions:**
+
+1. **Verify health check command manually:**
+   ```powershell
+   git --version
+   $LASTEXITCODE  # Should be 0
+   ```
+
+2. **Update health check in config:**
+   ```json
+   "HealthCheckCommands": {
+     "Git.Git": "git --version",
+     "BadExample": ""
+   }
+   ```
+
+3. **Disable health checks temporarily:**
+   ```json
+   "UpdateValidation": {
+     "CheckPackageHealth": false
+   }
+   ```
+
+4. **Check package path is in $env:PATH:**
+   ```powershell
+   $env:PATH -split ';' | Select-String "Git"
+   ```
+
+### ❌ Validation takes too long
+
+**Problem:** Validation process slows down updates significantly.
+
+**Solutions:**
+
+1. **Reduce validation timeout:**
+   ```json
+   "UpdateValidation": {
+     "ValidationTimeout": 15
+   }
+   ```
+
+2. **Disable retries:**
+   ```json
+   "UpdateValidation": {
+     "RetryFailedValidation": false
+   }
+   ```
+
+3. **Disable validation temporarily:**
+   ```json
+   "UpdateValidation": {
+     "EnableValidation": false
+   }
+   ```
+
+4. **Remove health checks for slow packages:**
+   ```json
+   "HealthCheckCommands": {
+     "SlowPackage": ""
+   }
+   ```
+
+### ❌ Cannot find validation report
+
+**Problem:** Validation report not generated or cannot be located.
+
+**Solutions:**
+
+1. **Check report directory:**
+   ```powershell
+   Get-ChildItem ".\reports" -Filter "validation-report-*"
+   ```
+
+2. **Verify reports directory in config:**
+   ```json
+   "ReportSettings": {
+     "ReportDirectory": ".\\reports"
+   }
+   ```
+
+3. **Check validation is enabled:**
+   ```json
+   "UpdateValidation": {
+     "EnableValidation": true
+   }
+   ```
+
+4. **Manually generate validation report:**
+   ```powershell
+   Import-Module .\UpdateUtilities.psm1
+   $results = Invoke-UpdateValidation -Packages $packages
+   New-ValidationReport -ValidationResults $results -OutputPath ".\validation.html"
    ```
 
 ---

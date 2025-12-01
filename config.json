@@ -106,5 +106,29 @@
       "Chocolatey": [],
       "Store": []
     }
+  },
+  "UpdateValidation": {
+    "EnableValidation": true,
+    "ValidationTimeout": 30,
+    "VerifyVersionChange": true,
+    "CheckPackageHealth": true,
+    "RetryFailedValidation": true,
+    "MaxValidationRetries": 2,
+    "ValidationMethods": {
+      "Winget": "Version",
+      "Chocolatey": "Version",
+      "Store": "Basic"
+    },
+    "FailureActions": {
+      "LogFailure": true,
+      "NotifyOnFailure": true,
+      "AttemptRollback": false,
+      "ContinueOnFailure": true
+    },
+    "HealthCheckCommands": {
+      "Git.Git": "git --version",
+      "Microsoft.PowerShell": "pwsh --version",
+      "Microsoft.WindowsTerminal": ""
+    }
   }
 }

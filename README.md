@@ -139,6 +139,7 @@ Interactive tool for managing update priorities:
 - **📊 Update History Database** - JSON-based tracking of all package operations with timestamps and status
 - **⚡ Differential Updates** - Smart caching system that only processes packages with actual version changes
 - **🎯 Package Priority/Ordering** - Control update sequence with Critical, High, Normal, Low, and Deferred priority levels
+- **✅ Update Validation** - Verify updates succeeded with version checks, health validation, and detailed reporting
 
 ---
 
@@ -900,6 +901,115 @@ Write-Host "Critical packages: $($summary.Critical.Winget)"
 - 🎮 **Resource Management** - Defer low-priority updates during peak hours
 - 📊 **Predictable Order** - Consistent, reproducible update sequences
 - ⏱️ **Time Control** - Skip deferred packages when time-limited
+
+---
+
+## ✅ Update Validation
+
+The validation system verifies that updates completed successfully and packages are functioning correctly.
+
+### Features
+
+- **🔍 Version Verification** - Confirms version changed after update
+- **💚 Health Checks** - Runs custom commands to verify package functionality
+- **📊 Detailed Reports** - Generates HTML, JSON, or text validation reports
+- **🔄 Retry Logic** - Automatically retries failed validations
+- **⚠️ Failure Actions** - Configurable responses to validation failures
+
+### Configuration
+
+Edit `config.json` to customize validation behavior:
+
+```json
+{
+  "UpdateValidation": {
+    "EnableValidation": true,
+    "ValidationTimeout": 30,
+    "VerifyVersionChange": true,
+    "CheckPackageHealth": true,
+    "RetryFailedValidation": true,
+    "MaxValidationRetries": 2,
+    "ValidationMethods": {
+      "Winget": "Version",
+      "Chocolatey": "Version",
+      "Store": "Basic"
+    },
+    "FailureActions": {
+      "LogFailure": true,
+      "NotifyOnFailure": true,
+      "AttemptRollback": false,
+      "ContinueOnFailure": true
+    },
+    "HealthCheckCommands": {
+      "Git.Git": "git --version",
+      "Microsoft.PowerShell": "pwsh --version",
+      "Microsoft.WindowsTerminal": ""
+    }
+  }
+}
+```
+
+### Validation Methods
+
+- **Version** - Parses version output from package manager (Winget, Chocolatey)
+- **Basic** - Simple existence check (Microsoft Store)
+
+### Health Check Commands
+
+Define custom commands to verify each package works after update:
+
+```json
+"HealthCheckCommands": {
+  "Git.Git": "git --version",
+  "Python.Python.3": "python --version",
+  "Node.js": "node --version",
+  "7zip.7zip": "7z",
+  "MyApp.Package": ""
+}
+```
+
+Leave empty `""` to skip health checks for a package.
+
+### Using Validation Functions
+
+```powershell
+# Get package version
+$version = Get-PackageVersion -PackageName "Git.Git" -Source "Winget"
+
+# Test if package is installed
+$installed = Test-PackageInstalled -PackageName "Git.Git" -Source "Winget"
+
+# Validate an update
+$result = Test-UpdateSuccess -PackageName "Git.Git" -Source "Winget" `
+  -PreviousVersion "2.43.0" -ExpectedVersion "2.44.0"
+
+# Run health check
+$health = Test-PackageHealth -PackageName "Git.Git" -Source "Winget"
+
+# Batch validation
+$packages = @(
+  @{ Name = "Git.Git"; Source = "Winget"; PreviousVersion = "2.43.0" },
+  @{ Name = "Python.Python.3"; Source = "Winget"; PreviousVersion = "3.11.0" }
+)
+$results = Invoke-UpdateValidation -Packages $packages
+
+# Generate validation report
+New-ValidationReport -ValidationResults $results `
+  -OutputPath ".\reports\validation.html" -Format "HTML"
+```
+
+### Validation Reports
+
+Reports include:
+- ✅ **Summary Statistics** - Total, successful, failed validations
+- 📦 **Package Details** - Name, source, versions (previous/current)
+- ✔️ **Status** - Pass/fail with detailed messages
+- 🏥 **Health Check Results** - Command output and exit codes
+
+**Report Formats:**
+- **HTML** - Styled report with color-coded results
+- **JSON** - Structured data for programmatic access
+- **Text** - Plain text for easy reading
 
 ---
 

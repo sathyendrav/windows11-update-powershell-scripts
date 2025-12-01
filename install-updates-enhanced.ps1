@@ -115,6 +115,9 @@ $reportData = @{
     StartTime = Get-Date
 }
 
+# Initialize validation tracking
+$validationPackages = @()
+
 # ============================================================================
 # Pre-flight Checks
 # ============================================================================
@@ -210,6 +213,27 @@ if ($config.UpdateSettings.EnableWinget) {
             $wingetList = winget upgrade 2>&1
             Write-Log "$wingetList" -Level "Info"
             
+            # Parse available updates for validation tracking
+            if ($config.UpdateValidation.EnableValidation) {
+                $wingetOutput = winget list 2>&1 | Out-String
+                $wingetLines = $wingetOutput -split "`n" | Where-Object { $_ -match '\S' }
+                foreach ($line in $wingetLines) {
+                    if ($line -match '([\w\.]+)\s+([\d\.]+)') {
+                        $pkgName = $matches[1]
+                        $pkgVersion = $matches[2]
+                        if ($pkgName -ne 'Name' -and $pkgName -ne 'Id') {
+                            $validationPackages += @{
+                                Name = $pkgName
+                                Source = "Winget"
+                                PreviousVersion = $pkgVersion
+                                ExpectedVersion = $null
+                            }
+                        }
+                    }
+                }
+                Write-Log "Captured $($validationPackages.Count) package versions for validation" -Level "Info"
+            }
+            
             # Check for exclusions
             $exclusions = $config.PackageExclusions.Winget
             if ($exclusions -and $exclusions.Count -gt 0) {
@@ -270,6 +294,25 @@ if ($config.UpdateSettings.EnableChocolatey) {
     
     if (Test-UpdateSource -Source "Chocolatey") {
         try {
+            # Capture versions for validation
+            if ($config.UpdateValidation.EnableValidation) {
+                Write-Log "Capturing package versions for validation..." -Level "Info"
+                $chocoList = choco list --local-only 2>&1 | Out-String
+                $chocoLines = $chocoList -split "`n" | Where-Object { $_ -match '\S' }
+                foreach ($line in $chocoLines) {
+                    if ($line -match '([\w\.-]+)\s+([\d\.]+)') {
+                        $pkgName = $matches[1]
+                        $pkgVersion = $matches[2]
+                        $validationPackages += @{
+                            Name = $pkgName
+                            Source = "Chocolatey"
+                            PreviousVersion = $pkgVersion
+                            ExpectedVersion = $null
+                        }
+                    }
+                }
+            }
+            
             # Check for exclusions
             $exclusions = $config.PackageExclusions.Chocolatey
             if ($exclusions -and $exclusions.Count -gt 0) {
@@ -322,6 +365,42 @@ if ($config.UpdateSettings.EnableChocolatey) {
 } else {
     Write-Log "Chocolatey updates disabled in configuration." -Level "Info"
     $reportData.Chocolatey.Status = "Disabled"
+}
+
+# ============================================================================
+# Update Validation
+# ============================================================================
+
+if ($config.UpdateValidation.EnableValidation -and $validationPackages.Count -gt 0) {
+    Write-Log "`n" + ("=" * 70) -Level "Info"
+    Write-Log "UPDATE VALIDATION" -Level "Info"
+    Write-Log ("=" * 70) -Level "Info"
+    
+    Write-Log "Validating $($validationPackages.Count) package updates..." -Level "Info"
+    
+    # Perform validation
+    $validationResults = Invoke-UpdateValidation -Packages $validationPackages -Config $config
+    
+    # Generate validation report
+    $validationReportPath = Join-Path $config.ReportSettings.ReportDirectory "validation-report-$(Get-Date -Format 'yyyyMMdd-HHmmss').html"
+    $reportCreated = New-ValidationReport -ValidationResults $validationResults -OutputPath $validationReportPath -Format "HTML"
+    
+    if ($reportCreated) {
+        Write-Log "Validation report saved to: $validationReportPath" -Level "Success"
+    }
+    
+    # Summary
+    $successCount = ($validationResults | Where-Object { $_.ValidationSuccess }).Count
+    $failureCount = ($validationResults | Where-Object { -not $_.ValidationSuccess }).Count
+    Write-Log "`nValidation Summary: $successCount passed, $failureCount failed" -Level "Info"
+    
+    # Add validation data to report
+    $reportData.Validation = @{
+        Total = $validationResults.Count
+        Successful = $successCount
+        Failed = $failureCount
+        Results = $validationResults
+    }
 }
 
 # ============================================================================

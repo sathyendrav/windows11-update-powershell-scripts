@@ -1753,6 +1753,404 @@ function Remove-PackageFromPriority {
     }
 }
 
+# ============================================================================
+# Update Validation Functions
+# ============================================================================
+
+function Get-PackageVersion {
+    <#
+    .SYNOPSIS
+        Gets the currently installed version of a package.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Store", "Winget", "Chocolatey")]
+        [string]$Source
+    )
+    
+    try {
+        switch ($Source) {
+            "Winget" {
+                $output = winget list --id $PackageName --exact 2>&1 | Out-String
+                if ($output -match "$PackageName\s+(\S+)") {
+                    return $matches[1]
+                }
+                return $null
+            }
+            
+            "Chocolatey" {
+                $output = choco list --local-only $PackageName --exact 2>&1 | Out-String
+                if ($output -match "$PackageName\s+(\S+)") {
+                    return $matches[1]
+                }
+                return $null
+            }
+            
+            "Store" {
+                Write-Log "Store app version detection not fully supported" -Level "Warning"
+                return "Unknown"
+            }
+        }
+    } catch {
+        Write-Log "Error getting package version: $_" -Level "Error"
+        return $null
+    }
+}
+
+function Test-PackageInstalled {
+    <#
+    .SYNOPSIS
+        Tests if a package is installed.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Store", "Winget", "Chocolatey")]
+        [string]$Source
+    )
+    
+    $version = Get-PackageVersion -PackageName $PackageName -Source $Source
+    return ($null -ne $version -and $version -ne "Unknown")
+}
+
+function Test-UpdateSuccess {
+    <#
+    .SYNOPSIS
+        Validates that an update was successful.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Store", "Winget", "Chocolatey")]
+        [string]$Source,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$PreviousVersion,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$ExpectedVersion,
+        
+        [Parameter(Mandatory = $false)]
+        [object]$Config
+    )
+    
+    if (-not $Config) {
+        $Config = Get-UpdateConfig
+    }
+    
+    if (-not $Config.UpdateValidation.EnableValidation) {
+        return @{
+            Success = $true
+            Method = "Skipped"
+            Message = "Validation disabled"
+        }
+    }
+    
+    Write-Log "Validating update for $PackageName ($Source)..." -Level "Info"
+    
+    $currentVersion = Get-PackageVersion -PackageName $PackageName -Source $Source
+    
+    if (-not $currentVersion) {
+        return @{
+            Success = $false
+            Method = "VersionCheck"
+            Message = "Package not found after update"
+            PreviousVersion = $PreviousVersion
+            CurrentVersion = $null
+        }
+    }
+    
+    if ($Config.UpdateValidation.VerifyVersionChange -and $PreviousVersion) {
+        if ($currentVersion -eq $PreviousVersion) {
+            return @{
+                Success = $false
+                Method = "VersionCheck"
+                Message = "Version unchanged after update"
+                PreviousVersion = $PreviousVersion
+                CurrentVersion = $currentVersion
+            }
+        }
+    }
+    
+    if ($ExpectedVersion -and $currentVersion -ne $ExpectedVersion) {
+        return @{
+            Success = $false
+            Method = "VersionCheck"
+            Message = "Version mismatch"
+            PreviousVersion = $PreviousVersion
+            CurrentVersion = $currentVersion
+            ExpectedVersion = $ExpectedVersion
+        }
+    }
+    
+    if ($Config.UpdateValidation.CheckPackageHealth) {
+        $healthCheck = Test-PackageHealth -PackageName $PackageName -Source $Source -Config $Config
+        
+        if (-not $healthCheck.Success) {
+            return @{
+                Success = $false
+                Method = "HealthCheck"
+                Message = $healthCheck.Message
+                PreviousVersion = $PreviousVersion
+                CurrentVersion = $currentVersion
+                HealthCheckDetails = $healthCheck
+            }
+        }
+    }
+    
+    return @{
+        Success = $true
+        Method = "Complete"
+        Message = "Update validated successfully"
+        PreviousVersion = $PreviousVersion
+        CurrentVersion = $currentVersion
+    }
+}
+
+function Test-PackageHealth {
+    <#
+    .SYNOPSIS
+        Performs health check on a package.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Store", "Winget", "Chocolatey")]
+        [string]$Source,
+        
+        [Parameter(Mandatory = $false)]
+        [object]$Config
+    )
+    
+    if (-not $Config) {
+        $Config = Get-UpdateConfig
+    }
+    
+    $healthCommand = $Config.UpdateValidation.HealthCheckCommands.$PackageName
+    
+    if ([string]::IsNullOrWhiteSpace($healthCommand)) {
+        return @{
+            Success = $true
+            Method = "NoCheck"
+            Message = "No health check configured"
+        }
+    }
+    
+    try {
+        Write-Log "Running health check for ${PackageName}: $healthCommand" -Level "Info"
+        
+        $output = Invoke-Expression $healthCommand 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+        
+        if ($exitCode -eq 0) {
+            return @{
+                Success = $true
+                Method = "Command"
+                Message = "Health check passed"
+                Command = $healthCommand
+                Output = $output.Trim()
+            }
+        } else {
+            return @{
+                Success = $false
+                Method = "Command"
+                Message = "Health check failed (exit code: $exitCode)"
+                Command = $healthCommand
+                Output = $output.Trim()
+                ExitCode = $exitCode
+            }
+        }
+    } catch {
+        return @{
+            Success = $false
+            Method = "Command"
+            Message = "Health check error: $_"
+            Command = $healthCommand
+            Error = $_.Exception.Message
+        }
+    }
+}
+
+function Invoke-UpdateValidation {
+    <#
+    .SYNOPSIS
+        Performs comprehensive update validation.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$Packages,
+        
+        [Parameter(Mandatory = $false)]
+        [object]$Config
+    )
+    
+    if (-not $Config) {
+        $Config = Get-UpdateConfig
+    }
+    
+    $results = @()
+    
+    foreach ($package in $Packages) {
+        $validation = Test-UpdateSuccess `
+            -PackageName $package.Name `
+            -Source $package.Source `
+            -PreviousVersion $package.PreviousVersion `
+            -ExpectedVersion $package.ExpectedVersion `
+            -Config $Config
+        
+        $result = [PSCustomObject]@{
+            PackageName = $package.Name
+            Source = $package.Source
+            PreviousVersion = $package.PreviousVersion
+            CurrentVersion = $validation.CurrentVersion
+            ValidationSuccess = $validation.Success
+            ValidationMethod = $validation.Method
+            ValidationMessage = $validation.Message
+        }
+        
+        $results += $result
+        
+        if ($validation.Success) {
+            Write-Log "Validation passed: $($package.Name) ($($validation.CurrentVersion))" -Level "Success"
+        } else {
+            Write-Log "Validation failed: $($package.Name) - $($validation.Message)" -Level "Error"
+        }
+    }
+    
+    return $results
+}
+
+function New-ValidationReport {
+    <#
+    .SYNOPSIS
+        Creates a validation report.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$ValidationResults,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath,
+        
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("HTML", "JSON", "Text")]
+        [string]$Format = "HTML"
+    )
+    
+    try {
+        $successCount = ($ValidationResults | Where-Object { $_.ValidationSuccess }).Count
+        $failureCount = ($ValidationResults | Where-Object { -not $_.ValidationSuccess }).Count
+        $totalCount = $ValidationResults.Count
+        
+        switch ($Format) {
+            "HTML" {
+                $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                
+                $html = @'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Update Validation Report</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; }
+        .total { background: #3498db; color: white; }
+        .success { background: #2ecc71; color: white; }
+        .failure { background: #e74c3c; color: white; }
+        .summary-number { font-size: 36px; font-weight: bold; }
+        .summary-label { font-size: 14px; margin-top: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th { background: #34495e; color: white; padding: 12px; text-align: left; }
+        td { padding: 10px; border-bottom: 1px solid #ddd; }
+        tr:hover { background: #f8f9fa; }
+        .status-success { color: #2ecc71; font-weight: bold; }
+        .status-failure { color: #e74c3c; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Update Validation Report</h1>
+        <p><strong>Generated:</strong> {0}</p>
+        <div class="summary">
+            <div class="summary-card total"><div class="summary-number">{1}</div><div class="summary-label">Total</div></div>
+            <div class="summary-card success"><div class="summary-number">{2}</div><div class="summary-label">Validated</div></div>
+            <div class="summary-card failure"><div class="summary-number">{3}</div><div class="summary-label">Failed</div></div>
+        </div>
+        <table><tr><th>Package</th><th>Source</th><th>Previous</th><th>Current</th><th>Status</th><th>Message</th></tr>
+'@
+                
+                $html = $html -f $timestamp, $totalCount, $successCount, $failureCount
+                
+                foreach ($result in $ValidationResults) {
+                    $statusClass = if ($result.ValidationSuccess) { "status-success" } else { "status-failure" }
+                    $statusText = if ($result.ValidationSuccess) { "Passed" } else { "Failed" }
+                    
+                    $html += "<tr><td>$($result.PackageName)</td><td>$($result.Source)</td><td>$($result.PreviousVersion)</td><td>$($result.CurrentVersion)</td><td class=`"$statusClass`">$statusText</td><td>$($result.ValidationMessage)</td></tr>"
+                }
+                
+                $html += "</table></div></body></html>"
+                $html | Set-Content $OutputPath -Encoding UTF8
+            }
+            
+            "JSON" {
+                $report = @{
+                    GeneratedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                    Summary = @{
+                        Total = $totalCount
+                        Successful = $successCount
+                        Failed = $failureCount
+                    }
+                    Results = $ValidationResults
+                }
+                
+                $report | ConvertTo-Json -Depth 10 | Set-Content $OutputPath -Encoding UTF8
+            }
+            
+            "Text" {
+                $lines = @()
+                $lines += "Update Validation Report"
+                $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+                $lines += "Generated: $timestamp"
+                $lines += ""
+                $lines += "Summary:"
+                $lines += "Total: $totalCount - Validated: $successCount - Failed: $failureCount"
+                $lines += ""
+                
+                foreach ($result in $ValidationResults) {
+                    if ($result.ValidationSuccess) {
+                        $status = "[PASS]"
+                    } else {
+                        $status = "[FAIL]"
+                    }
+                    $line = "{0} {1} ({2}) - Prev: {3} - Curr: {4} - {5}" -f $status, $result.PackageName, $result.Source, $result.PreviousVersion, $result.CurrentVersion, $result.ValidationMessage
+                    $lines += $line
+                }
+                
+                $output = $lines -join [Environment]::NewLine
+                $output | Set-Content $OutputPath -Encoding UTF8
+            }
+        }
+        
+        Write-Log "Validation report saved: $OutputPath" -Level "Info"
+        return $true
+    } catch {
+        Write-Log "Error creating validation report: $_" -Level "Error"
+        return $false
+    }
+}
+
 # Export module members
 Export-ModuleMember -Function @(
     'Get-UpdateConfig',
@@ -1784,5 +2182,11 @@ Export-ModuleMember -Function @(
     'Sort-PackagesByPriority',
     'Get-PrioritySummary',
     'Add-PackageToPriority',
-    'Remove-PackageFromPriority'
+    'Remove-PackageFromPriority',
+    'Get-PackageVersion',
+    'Test-PackageInstalled',
+    'Test-UpdateSuccess',
+    'Test-PackageHealth',
+    'Invoke-UpdateValidation',
+    'New-ValidationReport'
 )
