@@ -52,5 +52,13 @@
     "ParallelExecution": false,
     "VerboseOutput": false,
     "DryRun": false
+  },
+  "RollbackSettings": {
+    "EnableAutomaticRestorePoints": true,
+    "RestorePointDescription": "Before Windows Update Helper",
+    "KeepPackageHistory": true,
+    "PackageHistoryDays": 90,
+    "AllowPackageDowngrade": true,
+    "BackupBeforeRollback": false
   }
 }

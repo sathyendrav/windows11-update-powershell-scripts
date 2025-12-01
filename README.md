@@ -69,6 +69,17 @@ PowerShell module providing common functions:
 - Pre-flight system checks
 - Report generation
 - Restore point creation
+- Rollback capabilities
+
+### ⏮️ `rollback-updates.ps1` (New! 🎉)
+**Rollback & Restore Utility**
+
+Powerful rollback tool for undoing updates:
+- 📋 **List restore points** and restore to previous states
+- 📜 **View package history** from Winget and Chocolatey
+- ⬇️ **Rollback packages** to specific versions
+- 🖥️ **Interactive menu** for easy navigation
+- 🔒 **Safety checks** with confirmation prompts
 
 ---
 
@@ -93,6 +104,7 @@ PowerShell module providing common functions:
 - **🔄 Retry Logic** - Automatic retry for failed updates
 - **🔔 Toast Notifications** - Native Windows 10/11 notifications for update status
 - **📧 Email Notifications** - Email alerts support (configurable via SMTP settings)
+- **⏮️ Rollback Capability** - Restore to previous restore points or rollback specific packages
 
 ---
 
@@ -392,6 +404,72 @@ param(
 ```powershell
 .\update-checker2.ps1 -AutoUpdate
 ```
+
+---
+
+### Option 4: `rollback-updates.ps1` - Rollback & Restore (New! 🎉)
+
+**What it does:**
+- Lists all system restore points
+- Restores system to previous states
+- Views package update history
+- Rolls back specific packages to older versions
+
+**Interactive Menu Mode:**
+```powershell
+.\rollback-updates.ps1
+```
+
+**Command-Line Usage:**
+
+```powershell
+# List all restore points
+.\rollback-updates.ps1 -ListRestorePoints
+
+# View package history
+.\rollback-updates.ps1 -ListHistory
+
+# Rollback a specific package
+.\rollback-updates.ps1 -RollbackPackage "googlechrome" -Version "119.0" -Source Chocolatey
+```
+
+#### Key Features
+
+- **📋 System Restore Management**: List and restore to any available restore point
+- **📜 Package History**: View recent installations and upgrades from Winget and Chocolatey
+- **⬇️ Package Rollback**: Downgrade specific packages to previous versions
+- **🔒 Safety Checks**: Confirmation prompts before any destructive operations
+- **🖥️ Interactive Menu**: User-friendly menu for easy navigation
+
+#### Examples
+
+**Launch interactive menu:**
+```powershell
+.\rollback-updates.ps1
+```
+
+**List restore points:**
+```powershell
+.\rollback-updates.ps1 -ListRestorePoints
+```
+
+**Rollback Chrome via Chocolatey:**
+```powershell
+.\rollback-updates.ps1 -RollbackPackage "googlechrome" -Version "119.0.6045.159" -Source Chocolatey
+```
+
+**Rollback 7-Zip via Winget:**
+```powershell
+.\rollback-updates.ps1 -RollbackPackage "7zip.7zip" -Version "21.07" -Source Winget
+```
+
+#### Important Notes
+
+- 🔴 **System Restore requires Administrator privileges**
+- ⚠️ **Restoring will restart your computer**
+- 📝 **Not all packages support version-specific installation**
+- 🔄 **Winget rollback**: Uninstalls current version, then installs target version
+- 🍫 **Chocolatey rollback**: Uses `--allow-downgrade` flag
 
 ---
 

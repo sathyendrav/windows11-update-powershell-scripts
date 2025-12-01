@@ -353,6 +353,254 @@ function ConvertTo-HtmlReport {
 }
 
 # ============================================================================
+# Rollback Functions
+# ============================================================================
+
+function Get-SystemRestorePoints {
+    <#
+    .SYNOPSIS
+        Lists all available system restore points.
+    .DESCRIPTION
+        Retrieves system restore points created by Windows and this script.
+    .EXAMPLE
+        Get-SystemRestorePoints | Format-Table
+    #>
+    try {
+        $restorePoints = Get-ComputerRestorePoint | Select-Object -Property `
+            SequenceNumber,
+            CreationTime,
+            Description,
+            RestorePointType,
+            @{Name='Size';Expression={[math]::Round($_.Size/1GB, 2)}}
+        
+        return $restorePoints
+    } catch {
+        Write-Warning "Failed to retrieve restore points: $_"
+        return $null
+    }
+}
+
+function Invoke-SystemRestore {
+    <#
+    .SYNOPSIS
+        Restores system to a previous restore point.
+    .DESCRIPTION
+        Initiates system restore to a specified restore point sequence number.
+        Requires administrator privileges and will restart the computer.
+    .PARAMETER SequenceNumber
+        The sequence number of the restore point to restore to.
+    .PARAMETER Confirm
+        If specified, prompts for confirmation before restoring.
+    .EXAMPLE
+        Invoke-SystemRestore -SequenceNumber 123 -Confirm
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$SequenceNumber,
+        
+        [switch]$Confirm
+    )
+    
+    # Check admin privileges
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    
+    if (-not $isAdmin) {
+        Write-Warning "System restore requires Administrator privileges"
+        return $false
+    }
+    
+    try {
+        # Verify restore point exists
+        $restorePoint = Get-ComputerRestorePoint | Where-Object { $_.SequenceNumber -eq $SequenceNumber }
+        
+        if (-not $restorePoint) {
+            Write-Warning "Restore point with sequence number $SequenceNumber not found"
+            return $false
+        }
+        
+        Write-Host "Restore Point Details:" -ForegroundColor Cyan
+        Write-Host "  Sequence Number: $($restorePoint.SequenceNumber)" -ForegroundColor White
+        Write-Host "  Created: $($restorePoint.CreationTime)" -ForegroundColor White
+        Write-Host "  Description: $($restorePoint.Description)" -ForegroundColor White
+        Write-Host ""
+        
+        if ($Confirm) {
+            $response = Read-Host "This will restart your computer. Continue? (Y/N)"
+            if ($response -ne 'Y' -and $response -ne 'y') {
+                Write-Host "System restore cancelled" -ForegroundColor Yellow
+                return $false
+            }
+        }
+        
+        Write-Host "Initiating system restore..." -ForegroundColor Yellow
+        Write-Host "Your computer will restart and restore to the selected point" -ForegroundColor Yellow
+        
+        # Restore using rstrui.exe with /offline parameter for automated restore
+        Restore-Computer -RestorePoint $SequenceNumber -Confirm:$false
+        
+        return $true
+    } catch {
+        Write-Warning "Failed to initiate system restore: $_"
+        return $false
+    }
+}
+
+function Get-PackageHistory {
+    <#
+    .SYNOPSIS
+        Retrieves package installation/update history.
+    .DESCRIPTION
+        Gets history of package operations from Winget and Chocolatey.
+    .PARAMETER Source
+        The package source: Winget, Chocolatey, or All.
+    .PARAMETER Days
+        Number of days of history to retrieve (default: 30).
+    .EXAMPLE
+        Get-PackageHistory -Source All -Days 7
+    #>
+    param(
+        [ValidateSet("Winget", "Chocolatey", "All")]
+        [string]$Source = "All",
+        
+        [int]$Days = 30
+    )
+    
+    $history = @()
+    $startDate = (Get-Date).AddDays(-$Days)
+    
+    # Winget history (from logs)
+    if ($Source -in @("Winget", "All")) {
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            try {
+                # Winget doesn't have built-in history command, check logs
+                $wingetLogPath = "$env:LOCALAPPDATA\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\DiagOutputDir"
+                if (Test-Path $wingetLogPath) {
+                    $logFiles = Get-ChildItem -Path $wingetLogPath -Filter "*.log" | 
+                                Where-Object { $_.LastWriteTime -gt $startDate }
+                    
+                    Write-Host "Note: Winget history available in logs at: $wingetLogPath" -ForegroundColor Gray
+                }
+            } catch {
+                Write-Verbose "Could not access Winget history: $_"
+            }
+        }
+    }
+    
+    # Chocolatey history
+    if ($Source -in @("Chocolatey", "All")) {
+        if (Get-Command choco -ErrorAction SilentlyContinue) {
+            try {
+                $chocoLogPath = "$env:ChocolateyInstall\logs\chocolatey.log"
+                if (Test-Path $chocoLogPath) {
+                    $logContent = Get-Content $chocoLogPath | Select-Object -Last 1000
+                    $recentOps = $logContent | Where-Object { 
+                        $_ -match "installed|upgraded|uninstalled" 
+                    }
+                    
+                    foreach ($op in $recentOps) {
+                        if ($op -match "\[.*?\] (.+?) v([\d\.]+)") {
+                            $history += [PSCustomObject]@{
+                                Source = "Chocolatey"
+                                Package = $matches[1]
+                                Version = $matches[2]
+                                Operation = if ($op -match "installed") { "Install" } 
+                                           elseif ($op -match "upgraded") { "Upgrade" } 
+                                           else { "Uninstall" }
+                                Timestamp = "See log file"
+                            }
+                        }
+                    }
+                }
+            } catch {
+                Write-Verbose "Could not access Chocolatey history: $_"
+            }
+        }
+    }
+    
+    return $history
+}
+
+function Invoke-PackageRollback {
+    <#
+    .SYNOPSIS
+        Rolls back a package to a previous version.
+    .DESCRIPTION
+        Attempts to downgrade a package using Winget or Chocolatey.
+    .PARAMETER PackageName
+        The name/ID of the package to rollback.
+    .PARAMETER Version
+        The target version to rollback to.
+    .PARAMETER Source
+        The package source: Winget or Chocolatey.
+    .EXAMPLE
+        Invoke-PackageRollback -PackageName "7zip.7zip" -Version "21.07" -Source Winget
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Version,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Winget", "Chocolatey")]
+        [string]$Source
+    )
+    
+    Write-Host "Attempting to rollback $PackageName to version $Version..." -ForegroundColor Yellow
+    
+    try {
+        switch ($Source) {
+            "Winget" {
+                if (Get-Command winget -ErrorAction SilentlyContinue) {
+                    # Winget doesn't support direct downgrade, need to uninstall and install specific version
+                    Write-Host "Uninstalling current version..." -ForegroundColor Yellow
+                    $uninstallResult = winget uninstall $PackageName --silent --accept-source-agreements
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "Installing version $Version..." -ForegroundColor Yellow
+                        $installResult = winget install $PackageName --version $Version --silent --accept-source-agreements --accept-package-agreements
+                        
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "Successfully rolled back $PackageName to version $Version" -ForegroundColor Green
+                            return $true
+                        }
+                    }
+                    
+                    Write-Warning "Rollback failed. Check if version $Version is available."
+                    return $false
+                } else {
+                    Write-Warning "Winget is not available"
+                    return $false
+                }
+            }
+            
+            "Chocolatey" {
+                if (Get-Command choco -ErrorAction SilentlyContinue) {
+                    # Chocolatey supports version pinning
+                    Write-Host "Installing specific version using Chocolatey..." -ForegroundColor Yellow
+                    $result = choco install $PackageName --version $Version --allow-downgrade --yes --force
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "Successfully rolled back $PackageName to version $Version" -ForegroundColor Green
+                        return $true
+                    } else {
+                        Write-Warning "Rollback failed. Check if version $Version is available."
+                        return $false
+                    }
+                } else {
+                    Write-Warning "Chocolatey is not available"
+                    return $false
+                }
+            }
+        }
+    } catch {
+        Write-Warning "Error during rollback: $_"
+        return $false
+    }
+}
+
+# ============================================================================
 # Notification Functions
 # ============================================================================
 
@@ -508,5 +756,9 @@ Export-ModuleMember -Function @(
     'New-UpdateRestorePoint',
     'Export-UpdateReport',
     'Send-ToastNotification',
-    'Send-UpdateNotification'
+    'Send-UpdateNotification',
+    'Get-SystemRestorePoints',
+    'Invoke-SystemRestore',
+    'Get-PackageHistory',
+    'Invoke-PackageRollback'
 )

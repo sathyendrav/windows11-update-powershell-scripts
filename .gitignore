@@ -9,10 +9,17 @@ reports/*.json
 *.bak
 *_OLD.md
 README_OLD.md
+*.backup
+*.rollback
 
 # PowerShell temporary files
 *.ps1~
 *.psm1~
+
+# Rollback and restore temporary files
+rollback-temp/
+restore-backup/
+package-cache/
 
 # Windows thumbnail cache
 Thumbs.db

@@ -14,6 +14,7 @@ Common issues and solutions for Windows Update Helper Scripts.
 - [Configuration Issues](#configuration-issues)
 - [Logging Issues](#logging-issues)
 - [Notification Issues](#notification-issues)
+- [Rollback Issues](#rollback-issues)
 
 ---
 
@@ -534,6 +535,115 @@ Get-Content .\config.json | ConvertFrom-Json
    ```
 
 **Note:** Scripts will continue to work normally even if notifications fail. They provide additional feedback but are not required for core functionality.
+
+---
+
+## Rollback Issues
+
+### ❌ Cannot list restore points
+
+**Problem:** `Get-SystemRestorePoints` returns nothing or access denied.
+
+**Solution:**
+
+1. **Run as Administrator:**
+   - System restore requires admin privileges
+   - Right-click PowerShell → Run as Administrator
+
+2. **Check if System Restore is enabled:**
+   ```powershell
+   Get-ComputerRestorePoint
+   ```
+
+3. **Enable System Restore if needed:**
+   - Open Control Panel → System → System Protection
+   - Select drive → Configure → Turn on system protection
+
+4. **Verify restore points exist:**
+   - Enhanced installer creates restore points automatically if `CreateRestorePoint: true` in config.json
+
+---
+
+### ❌ Package rollback fails
+
+**Problem:** `Invoke-PackageRollback` fails with "version not available" error.
+
+**Solution:**
+
+**For Winget:**
+- Not all packages support version-specific installation
+- Check available versions: `winget show <PackageID> --versions`
+- Some packages only offer "latest" version
+- Alternative: Manually download and install specific version
+
+**For Chocolatey:**
+- Check if version exists: `choco list <package> --all-versions`
+- Verify package repository has the version
+- Use `--allow-downgrade` flag (automatically included in rollback function)
+
+**Common Issues:**
+```powershell
+# Package not found
+choco list <package> --exact
+
+# Check version availability
+winget show <PackageID> --versions
+```
+
+---
+
+### ❌ System restore fails or hangs
+
+**Problem:** System restore doesn't complete or computer doesn't restart.
+
+**Solution:**
+
+1. **Ensure sufficient disk space:**
+   - System restore requires free space for backup
+   - Minimum 300MB recommended
+
+2. **Close all applications:**
+   - Save work before initiating restore
+   - Close unnecessary programs
+
+3. **Check restore point validity:**
+   - Not all restore points can be successfully restored
+   - Try a different restore point if one fails
+
+4. **Boot into Safe Mode if needed:**
+   - Press F8 during boot
+   - Select "Safe Mode"
+   - Run system restore from there
+
+5. **Alternative: Use Windows Recovery:**
+   - Settings → Update & Security → Recovery
+   - Advanced startup → System Restore
+
+---
+
+### ❌ Package history is empty
+
+**Problem:** `Get-PackageHistory` returns no results.
+
+**Solution:**
+
+1. **Check log file locations:**
+   - Winget: `$env:LOCALAPPDATA\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\DiagOutputDir`
+   - Chocolatey: `$env:ChocolateyInstall\logs\chocolatey.log`
+
+2. **Verify packages were installed:**
+   ```powershell
+   winget list
+   choco list --local-only
+   ```
+
+3. **Manual history review:**
+   ```powershell
+   # View Chocolatey log
+   Get-Content "$env:ChocolateyInstall\logs\chocolatey.log" | Select-Object -Last 50
+   ```
+
+**Note:** Package managers don't maintain comprehensive history databases. The script extracts history from log files where available.
 
 ---
 
