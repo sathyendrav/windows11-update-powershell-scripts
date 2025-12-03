@@ -1,9 +1,13 @@
 # Logs and Reports
 logs/*.log
 logs/*.txt
+logs/*.html
+logs/*.csv
 logs/*.json
 # Keep update-history.json in git (comment out to exclude it)
 # logs/update-history.json
+reports/*.log
+reports/*.txt
 reports/*.html
 reports/*.csv
 reports/*.json
@@ -25,6 +29,10 @@ restore-backup/
 package-cache/
 
 # Differential update cache
+cache/*.log
+cache/*.txt
+cache/*.html
+cache/*.csv
 cache/*.json
 # Keep cache directory structure
 !cache/.gitkeep
