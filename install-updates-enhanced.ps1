@@ -219,35 +219,126 @@ if ($config.UpdateSettings.EnableMicrosoftStore) {
     Write-Log "`n" + ("=" * 70) -Level "Info"
     Write-Log "MICROSOFT STORE UPDATES" -Level "Info"
     Write-Log ("=" * 70) -Level "Info"
-    
-    if (Test-UpdateSource -Source "Store") {
+
+    # Store package exclusions (optional in config)
+    $storeExclusions = @()
+    if ($config.PackageExclusions -and $config.PackageExclusions.Store) {
+        $storeExclusions = $config.PackageExclusions.Store
+        if ($storeExclusions -and $storeExclusions.Count -gt 0) {
+            Write-Log "Excluding Store packages: $($storeExclusions -join ', ')" -Level "Info"
+        }
+    }
+
+    $storeHandledByWinget = $false
+
+    # Prefer per-app enumeration via winget's msstore source when available.
+    if (Test-UpdateSource -Source "Winget") {
         try {
-            Get-CimInstance -Namespace "Root\cimv2\mdm\dmmap" `
-                            -ClassName "MDM_EnterpriseModernAppManagement_AppManagement01" | `
-                Invoke-CimMethod -MethodName UpdateScanMethod | Out-Null
-            
-            Write-Log "Microsoft Store update scan initiated successfully." -Level "Success"
-            $reportData.Store.Status = "Success"
-            
-            # Record history entry
-            if ($config.Logging.EnableUpdateHistory) {
-                Add-UpdateHistoryEntry -PackageName "Microsoft Store Apps" -Version "N/A" `
-                    -Source "Store" -Operation "Scan" -Success $true -HistoryPath $historyPath
+            $storeUpgrades = Get-WingetUpgradeablePackages -Source "msstore" -ExcludeIds $storeExclusions
+            $storeHandledByWinget = $true
+
+            if (-not $storeUpgrades -or $storeUpgrades.Count -eq 0) {
+                Write-Log "No Microsoft Store (msstore) updates available via winget." -Level "Info"
+                $reportData.Store.Status = "No Updates"
+            } else {
+                Write-Log "Found $($storeUpgrades.Count) Microsoft Store package(s) with updates (via winget)." -Level "Info"
+                foreach ($pkg in $storeUpgrades) {
+                    $fromVer = if ($pkg.Version) { $pkg.Version } else { "Unknown" }
+                    $toVer = if ($pkg.AvailableVersion) { $pkg.AvailableVersion } else { "Latest" }
+                    Write-Log "  - $($pkg.Name) ($($pkg.Id)) $fromVer -> $toVer" -Level "Info"
+                }
+
+                Write-Log "`nStarting Microsoft Store updates (per-package via winget)..." -Level "Info"
+
+                $storeSuccessCount = 0
+                $storeFailCount = 0
+
+                foreach ($pkg in $storeUpgrades) {
+                    $pkgId = $pkg.Id
+                    $pkgName = if ($pkg.Name) { $pkg.Name } else { $pkgId }
+                    $fromVer = if ($pkg.Version) { $pkg.Version } else { "Unknown" }
+                    $toVer = if ($pkg.AvailableVersion) { $pkg.AvailableVersion } else { "Latest" }
+
+                    Write-Log "Updating Microsoft Store package: $pkgName ($pkgId) $fromVer -> $toVer" -Level "Info"
+                    $startTime = Get-Date
+
+                    $upgradeOutput = winget upgrade --id $pkgId --exact --source msstore --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-String
+                    $exitCode = $LASTEXITCODE
+                    $duration = (Get-Date) - $startTime
+
+                    if ($exitCode -eq 0) {
+                        $storeSuccessCount++
+                        $reportData.Store.Count++
+                        Write-Log "Updated: $pkgName ($pkgId) in $([math]::Round($duration.TotalSeconds, 1))s" -Level "Success"
+
+                        if ($config.Logging.EnableUpdateHistory) {
+                            Add-UpdateHistoryEntry -PackageName $pkgId -Version $toVer -PreviousVersion $fromVer `
+                                -Source "Store" -Operation "Upgrade" -Success $true -HistoryPath $historyPath
+                        }
+                    } else {
+                        $storeFailCount++
+                        $reportData.Store.Errors += "$pkgId failed (exit code $exitCode)"
+                        Write-Log "FAILED: $pkgName ($pkgId) exit code $exitCode" -Level "Error"
+                        if ($upgradeOutput) {
+                            Write-Log "Winget(msstore) output for ${pkgId}:`n$upgradeOutput" -Level "Info"
+                        }
+
+                        if ($config.Logging.EnableUpdateHistory) {
+                            Add-UpdateHistoryEntry -PackageName $pkgId -Version $toVer -PreviousVersion $fromVer `
+                                -Source "Store" -Operation "Upgrade" -Success $false -ErrorMessage "Exit code: $exitCode" -HistoryPath $historyPath
+                        }
+                    }
+                }
+
+                if ($storeFailCount -eq 0) {
+                    Write-Log "Microsoft Store packages updated successfully ($storeSuccessCount updated)." -Level "Success"
+                    $reportData.Store.Status = "Success"
+                } elseif ($storeSuccessCount -gt 0) {
+                    Write-Log "Microsoft Store updates completed with errors ($storeSuccessCount succeeded, $storeFailCount failed)." -Level "Warning"
+                    $reportData.Store.Status = "Partial"
+                } else {
+                    Write-Log "Microsoft Store updates failed ($storeFailCount failed)." -Level "Error"
+                    $reportData.Store.Status = "Error"
+                }
             }
         } catch {
-            Write-Log "Failed to check Microsoft Store updates: $_" -Level "Error"
-            $reportData.Store.Status = "Error"
-            $reportData.Store.Errors += $_.Exception.Message
-            
-            # Record failure
-            if ($config.Logging.EnableUpdateHistory) {
-                Add-UpdateHistoryEntry -PackageName "Microsoft Store Apps" -Version "N/A" `
-                    -Source "Store" -Operation "Scan" -Success $false -ErrorMessage $_.Exception.Message -HistoryPath $historyPath
-            }
+            Write-Log "Winget-based Microsoft Store update enumeration failed; falling back to CIM scan. Error: $_" -Level "Warning"
+            $storeHandledByWinget = $false
         }
-    } else {
-        Write-Log "Microsoft Store update source is not accessible." -Level "Warning"
-        $reportData.Store.Status = "Unavailable"
+    }
+
+    # Fallback: CIM scan trigger (no per-app details available)
+    if (-not $storeHandledByWinget) {
+        if (Test-UpdateSource -Source "Store") {
+            try {
+                Get-CimInstance -Namespace "Root\cimv2\mdm\dmmap" `
+                                -ClassName "MDM_EnterpriseModernAppManagement_AppManagement01" | `
+                    Invoke-CimMethod -MethodName UpdateScanMethod | Out-Null
+
+                Write-Log "Microsoft Store update scan initiated successfully (CIM/MDM)." -Level "Success"
+                Write-Log "Note: CIM scan does not provide per-app update details; use winget msstore for per-package logging." -Level "Info"
+                $reportData.Store.Status = "Success"
+
+                # Record history entry
+                if ($config.Logging.EnableUpdateHistory) {
+                    Add-UpdateHistoryEntry -PackageName "Microsoft Store Apps" -Version "N/A" `
+                        -Source "Store" -Operation "Scan" -Success $true -HistoryPath $historyPath
+                }
+            } catch {
+                Write-Log "Failed to check Microsoft Store updates: $_" -Level "Error"
+                $reportData.Store.Status = "Error"
+                $reportData.Store.Errors += $_.Exception.Message
+
+                # Record failure
+                if ($config.Logging.EnableUpdateHistory) {
+                    Add-UpdateHistoryEntry -PackageName "Microsoft Store Apps" -Version "N/A" `
+                        -Source "Store" -Operation "Scan" -Success $false -ErrorMessage $_.Exception.Message -HistoryPath $historyPath
+                }
+            }
+        } else {
+            Write-Log "Microsoft Store update source is not accessible." -Level "Warning"
+            $reportData.Store.Status = "Unavailable"
+        }
     }
 } else {
     Write-Log "Microsoft Store updates disabled in configuration." -Level "Info"
@@ -297,27 +388,71 @@ if ($config.UpdateSettings.EnableWinget) {
             if ($exclusions -and $exclusions.Count -gt 0) {
                 Write-Log "Excluding packages: $($exclusions -join ', ')" -Level "Info"
             }
-            
-            Write-Log "`nStarting Winget package upgrades..." -Level "Info"
-            $wingetResult = winget upgrade --all --silent --accept-source-agreements --accept-package-agreements 2>&1
-            $wingetExitCode = $LASTEXITCODE
-            
-            if ($wingetExitCode -eq 0) {
-                Write-Log "Winget packages updated successfully." -Level "Success"
-                $reportData.Winget.Status = "Success"
-                
-                # Record history entry for successful upgrade
-                if ($config.Logging.EnableUpdateHistory) {
-                    Add-UpdateHistoryEntry -PackageName "Winget Packages (Batch)" -Version "Latest" `
-                        -Source "Winget" -Operation "Upgrade" -Success $true -HistoryPath $historyPath
-                }
+
+            # Enumerate upgradeable packages so we can log each one
+            $wingetUpgrades = Get-WingetUpgradeablePackages -ExcludeIds $exclusions
+            if (-not $wingetUpgrades -or $wingetUpgrades.Count -eq 0) {
+                Write-Log "No Winget package upgrades available." -Level "Info"
+                $reportData.Winget.Status = "No Updates"
             } else {
-                Write-Log "Winget upgrade completed with warnings or errors." -Level "Warning"
-                $reportData.Winget.Status = "Partial"
-                
-                if ($config.Logging.EnableUpdateHistory) {
-                    Add-UpdateHistoryEntry -PackageName "Winget Packages (Batch)" -Version "Latest" `
-                        -Source "Winget" -Operation "Upgrade" -Success $false -ErrorMessage "Exit code: $wingetExitCode" -HistoryPath $historyPath
+                Write-Log "Found $($wingetUpgrades.Count) Winget package(s) with upgrades." -Level "Info"
+                foreach ($pkg in $wingetUpgrades) {
+                    $fromVer = if ($pkg.Version) { $pkg.Version } else { "Unknown" }
+                    $toVer = if ($pkg.AvailableVersion) { $pkg.AvailableVersion } else { "Latest" }
+                    Write-Log "  - $($pkg.Name) ($($pkg.Id)) $fromVer -> $toVer" -Level "Info"
+                }
+
+                Write-Log "`nStarting Winget package upgrades (per-package)..." -Level "Info"
+
+                $wingetSuccessCount = 0
+                $wingetFailCount = 0
+
+                foreach ($pkg in $wingetUpgrades) {
+                    $pkgId = $pkg.Id
+                    $pkgName = if ($pkg.Name) { $pkg.Name } else { $pkgId }
+                    $fromVer = if ($pkg.Version) { $pkg.Version } else { "Unknown" }
+                    $toVer = if ($pkg.AvailableVersion) { $pkg.AvailableVersion } else { "Latest" }
+
+                    Write-Log "Upgrading Winget package: $pkgName ($pkgId) $fromVer -> $toVer" -Level "Info"
+                    $startTime = Get-Date
+
+                    $upgradeOutput = winget upgrade --id $pkgId --exact --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-String
+                    $exitCode = $LASTEXITCODE
+                    $duration = (Get-Date) - $startTime
+
+                    if ($exitCode -eq 0) {
+                        $wingetSuccessCount++
+                        $reportData.Winget.Count++
+                        Write-Log "Upgraded: $pkgName ($pkgId) in $([math]::Round($duration.TotalSeconds, 1))s" -Level "Success"
+
+                        if ($config.Logging.EnableUpdateHistory) {
+                            Add-UpdateHistoryEntry -PackageName $pkgId -Version $toVer -PreviousVersion $fromVer `
+                                -Source "Winget" -Operation "Upgrade" -Success $true -HistoryPath $historyPath
+                        }
+                    } else {
+                        $wingetFailCount++
+                        $reportData.Winget.Errors += "$pkgId failed (exit code $exitCode)"
+                        Write-Log "FAILED: $pkgName ($pkgId) exit code $exitCode" -Level "Error"
+                        if ($upgradeOutput) {
+                            Write-Log "Winget output for ${pkgId}:`n$upgradeOutput" -Level "Info"
+                        }
+
+                        if ($config.Logging.EnableUpdateHistory) {
+                            Add-UpdateHistoryEntry -PackageName $pkgId -Version $toVer -PreviousVersion $fromVer `
+                                -Source "Winget" -Operation "Upgrade" -Success $false -ErrorMessage "Exit code: $exitCode" -HistoryPath $historyPath
+                        }
+                    }
+                }
+
+                if ($wingetFailCount -eq 0) {
+                    Write-Log "Winget packages updated successfully ($wingetSuccessCount upgraded)." -Level "Success"
+                    $reportData.Winget.Status = "Success"
+                } elseif ($wingetSuccessCount -gt 0) {
+                    Write-Log "Winget upgrades completed with errors ($wingetSuccessCount succeeded, $wingetFailCount failed)." -Level "Warning"
+                    $reportData.Winget.Status = "Partial"
+                } else {
+                    Write-Log "Winget upgrades failed ($wingetFailCount failed)." -Level "Error"
+                    $reportData.Winget.Status = "Error"
                 }
             }
         } catch {
@@ -375,32 +510,111 @@ if ($config.UpdateSettings.EnableChocolatey) {
             $exclusions = $config.PackageExclusions.Chocolatey
             if ($exclusions -and $exclusions.Count -gt 0) {
                 Write-Log "Excluding packages: $($exclusions -join ', ')" -Level "Info"
-                
-                # Build exclusion parameters
-                $excludeParams = $exclusions | ForEach-Object { "--except=$_" }
-                $chocoResult = choco upgrade all -y $excludeParams 2>&1
-            } else {
-                $chocoResult = choco upgrade all -y 2>&1
             }
-            
-            $chocoExitCode = $LASTEXITCODE
-            
-            if ($chocoExitCode -eq 0) {
-                Write-Log "Chocolatey packages updated successfully." -Level "Success"
-                $reportData.Chocolatey.Status = "Success"
-                
-                # Record history entry
-                if ($config.Logging.EnableUpdateHistory) {
-                    Add-UpdateHistoryEntry -PackageName "Chocolatey Packages (Batch)" -Version "Latest" `
-                        -Source "Chocolatey" -Operation "Upgrade" -Success $true -HistoryPath $historyPath
+
+            # Enumerate outdated packages so we can log each one
+            Write-Log "Checking for available Chocolatey updates..." -Level "Info"
+            $outdatedRaw = choco outdated -r 2>&1 | Out-String
+            $outdatedLines = $outdatedRaw -split "`r?`n" | Where-Object { $_ -match '\S' }
+
+            $outdated = @()
+            foreach ($line in $outdatedLines) {
+                if ($line -notmatch '\|') { continue }
+                $parts = $line.Split('|')
+                if ($parts.Count -lt 3) { continue }
+
+                $name = $parts[0].Trim()
+                $current = $parts[1].Trim()
+                $available = $parts[2].Trim()
+                $pinned = $false
+                if ($parts.Count -ge 4) {
+                    $pinned = ($parts[3].Trim().ToLowerInvariant() -eq 'true')
                 }
+
+                if (-not $name) { continue }
+
+                $outdated += [PSCustomObject]@{
+                    Name = $name
+                    CurrentVersion = $current
+                    AvailableVersion = $available
+                    Pinned = $pinned
+                }
+            }
+
+            if ($exclusions -and $exclusions.Count -gt 0) {
+                $excludeSet = @{}
+                foreach ($excludeName in ($exclusions | Where-Object { $_ -and $_.Trim() })) {
+                    $excludeSet[$excludeName.Trim().ToLowerInvariant()] = $true
+                }
+                $outdated = $outdated | Where-Object { -not $excludeSet.ContainsKey($_.Name.ToLowerInvariant()) }
+            }
+
+            if (-not $outdated -or $outdated.Count -eq 0) {
+                Write-Log "No Chocolatey package upgrades available." -Level "Info"
+                $reportData.Chocolatey.Status = "No Updates"
             } else {
-                Write-Log "Chocolatey upgrade completed with warnings or errors." -Level "Warning"
-                $reportData.Chocolatey.Status = "Partial"
-                
-                if ($config.Logging.EnableUpdateHistory) {
-                    Add-UpdateHistoryEntry -PackageName "Chocolatey Packages (Batch)" -Version "Latest" `
-                        -Source "Chocolatey" -Operation "Upgrade" -Success $false -ErrorMessage "Exit code: $chocoExitCode" -HistoryPath $historyPath
+                Write-Log "Found $($outdated.Count) Chocolatey package(s) with upgrades." -Level "Info"
+                foreach ($pkg in $outdated) {
+                    $fromVer = if ($pkg.CurrentVersion) { $pkg.CurrentVersion } else { 'Unknown' }
+                    $toVer = if ($pkg.AvailableVersion) { $pkg.AvailableVersion } else { 'Latest' }
+                    $pinNote = if ($pkg.Pinned) { ' (pinned)' } else { '' }
+                    Write-Log "  - $($pkg.Name) $fromVer -> $toVer$pinNote" -Level "Info"
+                }
+
+                Write-Log "`nStarting Chocolatey package upgrades (per-package)..." -Level "Info"
+                $chocoSuccessCount = 0
+                $chocoFailCount = 0
+
+                foreach ($pkg in $outdated) {
+                    $pkgName = $pkg.Name
+                    $fromVer = if ($pkg.CurrentVersion) { $pkg.CurrentVersion } else { 'Unknown' }
+                    $toVer = if ($pkg.AvailableVersion) { $pkg.AvailableVersion } else { 'Latest' }
+
+                    if ($pkg.Pinned) {
+                        Write-Log "Skipping pinned Chocolatey package: $pkgName ($fromVer -> $toVer)" -Level "Warning"
+                        continue
+                    }
+
+                    Write-Log "Upgrading Chocolatey package: $pkgName $fromVer -> $toVer" -Level "Info"
+                    $startTime = Get-Date
+
+                    $upgradeOutput = choco upgrade $pkgName -y 2>&1 | Out-String
+                    $exitCode = $LASTEXITCODE
+                    $duration = (Get-Date) - $startTime
+
+                    if ($exitCode -eq 0) {
+                        $chocoSuccessCount++
+                        $reportData.Chocolatey.Count++
+                        Write-Log "Upgraded: $pkgName in $([math]::Round($duration.TotalSeconds, 1))s" -Level "Success"
+
+                        if ($config.Logging.EnableUpdateHistory) {
+                            Add-UpdateHistoryEntry -PackageName $pkgName -Version $toVer -PreviousVersion $fromVer `
+                                -Source "Chocolatey" -Operation "Upgrade" -Success $true -HistoryPath $historyPath
+                        }
+                    } else {
+                        $chocoFailCount++
+                        $reportData.Chocolatey.Errors += "$pkgName failed (exit code $exitCode)"
+                        Write-Log "FAILED: $pkgName exit code $exitCode" -Level "Error"
+                        if ($upgradeOutput) {
+                            Write-Log "Chocolatey output for ${pkgName}:`n$upgradeOutput" -Level "Info"
+                        }
+
+                        if ($config.Logging.EnableUpdateHistory) {
+                            Add-UpdateHistoryEntry -PackageName $pkgName -Version $toVer -PreviousVersion $fromVer `
+                                -Source "Chocolatey" -Operation "Upgrade" -Success $false -ErrorMessage "Exit code: $exitCode" -HistoryPath $historyPath
+                        }
+                    }
+                }
+
+                if ($chocoFailCount -eq 0) {
+                    Write-Log "Chocolatey packages updated successfully ($chocoSuccessCount upgraded)." -Level "Success"
+                    $reportData.Chocolatey.Status = "Success"
+                } elseif ($chocoSuccessCount -gt 0) {
+                    Write-Log "Chocolatey upgrades completed with errors ($chocoSuccessCount succeeded, $chocoFailCount failed)." -Level "Warning"
+                    $reportData.Chocolatey.Status = "Partial"
+                } else {
+                    Write-Log "Chocolatey upgrades failed ($chocoFailCount failed)." -Level "Error"
+                    $reportData.Chocolatey.Status = "Error"
                 }
             }
         } catch {

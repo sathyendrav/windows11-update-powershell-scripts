@@ -29,10 +29,19 @@ This collection focuses on automating Windows Update tasks on Windows 11 using P
 
 These scripts aim to be lightweight, transparent, and easy to modify.
 
+## Logging and history
+Some scripts (notably the enhanced installer) provide:
+- Per-package upgrade logging for Winget and Chocolatey.
+- Per-app Microsoft Store update logging when Winget `msstore` support is available.
+- An update history JSON database (for example: `.\logs\update-history.json`) that records per-package results.
+
+Note: triggering Microsoft Store updates via CIM/MDM only initiates a scan and does not provide per-app update details.
+
 ## Prerequisites
 - Windows 11 (supported builds may be documented per-script)
 - PowerShell 5.1 (Windows PowerShell) or PowerShell 7+ (some scripts may only work on Windows PowerShell)
 - Administrator privileges to run update and service-related commands
+- Winget (App Installer). For per-app Microsoft Store update logging, Winget must support the `msstore` source.
 - ExecutionPolicy set to allow script execution for the session, for example:
 
 ```powershell

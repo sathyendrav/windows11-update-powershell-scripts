@@ -2259,6 +2259,164 @@ function Get-WingetVersion {
     }
 }
 
+function Get-WingetUpgradeablePackages {
+    <#
+    .SYNOPSIS
+        Gets a structured list of Winget packages with available upgrades.
+    .DESCRIPTION
+        Prefers `winget upgrade --output json` when supported, and falls back to parsing
+        the standard table output when JSON output is unavailable.
+    .PARAMETER IncludeUnknown
+        Include packages where the installed version is unknown.
+    .PARAMETER ExcludeIds
+        Package IDs to exclude.
+    .EXAMPLE
+        Get-WingetUpgradeablePackages
+    .EXAMPLE
+        Get-WingetUpgradeablePackages -ExcludeIds @('Microsoft.Edge')
+    #>
+    [CmdletBinding()]
+    param(
+        [switch]$IncludeUnknown,
+        [string]$Source,
+        [string[]]$ExcludeIds = @()
+    )
+
+    if (-not (Test-UpdateSource -Source 'Winget')) {
+        return @()
+    }
+
+    $excludeSet = @{}
+    foreach ($excludeId in ($ExcludeIds | Where-Object { $_ -and $_.Trim() })) {
+        $excludeSet[$excludeId.Trim().ToLowerInvariant()] = $true
+    }
+
+    $packages = @()
+
+    # Try JSON output first (newer winget)
+    try {
+        $jsonArgs = @('upgrade', '--output', 'json')
+        if ($Source) {
+            $jsonArgs += @('--source', $Source)
+        }
+        if ($IncludeUnknown) {
+            $jsonArgs += '--include-unknown'
+        }
+
+        $jsonText = winget @jsonArgs 2>$null | Out-String
+        $jsonText = $jsonText.Trim()
+        if ($jsonText) {
+            $parsed = $jsonText | ConvertFrom-Json -ErrorAction Stop
+
+            $items = @()
+            if ($null -ne $parsed) {
+                if ($parsed.PSObject.Properties.Name -contains 'Data') {
+                    $items = $parsed.Data
+                } else {
+                    $items = $parsed
+                }
+            }
+
+            foreach ($item in @($items)) {
+                if ($null -eq $item) { continue }
+
+                $id = $item.PackageIdentifier
+                if (-not $id) { $id = $item.Id }
+                if (-not $id) { $id = $item.PackageId }
+
+                $name = $item.PackageName
+                if (-not $name) { $name = $item.Name }
+
+                $installedVersion = $item.InstalledVersion
+                if (-not $installedVersion) { $installedVersion = $item.Version }
+                if (-not $installedVersion) { $installedVersion = $item.Installed }
+
+                $availableVersion = $item.AvailableVersion
+                if (-not $availableVersion) { $availableVersion = $item.Available }
+
+                $source = $item.Source
+                if (-not $source) { $source = $item.PackageSource }
+
+                if (-not $id) { continue }
+
+                if ($excludeSet.ContainsKey($id.ToString().ToLowerInvariant())) {
+                    continue
+                }
+
+                $packages += [PSCustomObject]@{
+                    Name = $name
+                    Id = $id
+                    Version = $installedVersion
+                    AvailableVersion = $availableVersion
+                    Source = $source
+                }
+            }
+        }
+    } catch {
+        # ignore and fall back to text parsing
+        $packages = @()
+    }
+
+    # Text fallback
+    if (-not $packages -or $packages.Count -eq 0) {
+        $args = @('upgrade')
+        if ($Source) {
+            $args += @('--source', $Source)
+        }
+        if ($IncludeUnknown) {
+            $args += '--include-unknown'
+        }
+
+        $raw = winget @args 2>&1 | Out-String
+        $lines = $raw -split "`r?`n" | Where-Object { $_ -match '\S' }
+
+        # Find header line
+        $headerIndex = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*Name\s{2,}Id\s{2,}Version\s{2,}Available') {
+                $headerIndex = $i
+                break
+            }
+        }
+
+        if ($headerIndex -ge 0) {
+            for ($j = $headerIndex + 1; $j -lt $lines.Count; $j++) {
+                $line = $lines[$j]
+
+                # Stop at typical footer lines
+                if ($line -match '^\s*\d+\s+upgrades?\s+available\b') { break }
+
+                # Skip separator / noise lines
+                if ($line -match '^\s*-{3,}\s*$') { continue }
+                if ($line -match '^\s*--\s*') { continue }
+                if ($line -match '^\s*No\s+installed\s+package\s+found') { continue }
+
+                $parts = $line -split '\s{2,}'
+                if ($parts.Count -lt 4) { continue }
+
+                $name = $parts[0].Trim()
+                $id = $parts[1].Trim()
+                $installed = $parts[2].Trim()
+                $available = $parts[3].Trim()
+                $source = if ($parts.Count -ge 5) { $parts[4].Trim() } else { '' }
+
+                if (-not $id) { continue }
+                if ($excludeSet.ContainsKey($id.ToLowerInvariant())) { continue }
+
+                $packages += [PSCustomObject]@{
+                    Name = $name
+                    Id = $id
+                    Version = $installed
+                    AvailableVersion = $available
+                    Source = $source
+                }
+            }
+        }
+    }
+
+    return @($packages)
+}
+
 function Get-ChocolateyVersion {
     <#
     .SYNOPSIS
@@ -3597,6 +3755,7 @@ Export-ModuleMember -Function @(
     'Test-ChocolateyInstalled',
     'Test-PowerShellModule',
     'Get-WingetVersion',
+    'Get-WingetUpgradeablePackages',
     'Get-ChocolateyVersion',
     'Test-DependencyVersion',
     'Install-WingetCLI',

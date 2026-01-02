@@ -100,7 +100,7 @@ See [Configuration](#-configuration) section for details.
 ### 🚀 `install-updates.ps1` (Basic)
 **Automated Update Installer**
 
-Simple, hands-off script that runs Microsoft Store, Winget, and Chocolatey updates in fully automatic, non-interactive mode.
+Simple, hands-off script that updates Microsoft Store, Winget, and Chocolatey in fully automatic, non-interactive mode, with per-package status output (where supported).
 
 **Parameters:**
 - `-DisableStoreUpdates` - Skip Microsoft Store app updates
@@ -543,19 +543,19 @@ Full-featured installer with logging, reporting, and safety features.
 2. Initializes logging and transcript
 3. Runs pre-flight system checks
 4. Creates system restore point (if enabled)
-5. Triggers Microsoft Store update scan
-2. Upgrades all Winget packages silently
-3. Upgrades all Chocolatey packages silently
+5. Updates Microsoft Store apps (per-app via Winget `msstore` when available; otherwise triggers a Store scan)
+6. Upgrades Winget packages (per-package, logged)
+7. Upgrades Chocolatey packages (per-package, logged)
 
 **Run it:**
 ```powershell
-.\install-updates.ps1
+.\install-updates-enhanced.ps1
 ```
 
 **Behavior:**
-- **Microsoft Store**: Uses `Get-CimInstance` with MDM App Management class
-- **Winget**: Runs `winget upgrade --all` with silent flags
-- **Chocolatey**: Runs `choco upgrade all -y`
+- **Microsoft Store**: Prefers `winget` source `msstore` for per-app updates; falls back to CIM/MDM scan when not available
+- **Winget**: Enumerates available upgrades and runs `winget upgrade --id <id> --silent ...` per package
+- **Chocolatey**: Enumerates outdated packages and runs `choco upgrade <package> -y` per package
 
 ---
 
